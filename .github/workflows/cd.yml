@@ -1,0 +1,52 @@
+name: cd
+on:
+  # this action will only run on each push to main, if you prefer continuous deployment
+  # push:
+  #   branches: ["main"]
+  # this action will only run if you create a release, if you prefer continuous delivery
+  release:
+    types: [created]
+
+jobs:
+  build-publish-deploy:
+    name: Build, Publish, And Deploy To Cloud Run
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@master
+
+      # Build and publish the Docker image to the GCP Artifact Registry
+      - name: Login to GAR
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ secrets.GCP_REGION }}-docker.pkg.dev
+          username: _json_key
+          password: ${{ secrets.GCP_GH_SA_KEY }}
+      - id: docker-push-tagged
+        name: Tag Docker image and push to Google Artifact Registry
+        uses: docker/build-push-action@v3
+        with:
+          file: prod.Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.GCP_ARTIFACT_REPO }}python:${{ github.sha }}
+
+      # Setup gcloud CLI
+      - id: "auth"
+        uses: "google-github-actions/auth@v1"
+        with:
+          credentials_json: "${{ secrets.GCP_GH_SA_KEY }}"
+
+      - name: "Set up Cloud SDK"
+        uses: "google-github-actions/setup-gcloud@v1"
+
+      # Configure Docker with Credentials
+      - name: Configure Docker
+        run: |
+          gcloud auth configure-docker
+
+      # Deploy the Docker image to the GKE cluster
+      - name: Deploy
+        run: |
+          gcloud run deploy ${{ secrets.GCP_CLOUDRUN_SERVICE_NAME }} --image=${{ secrets.GCP_ARTIFACT_REPO }}python:${{ github.sha }} \
+          --allow-unauthenticated --region=${{ secrets.GCP_REGION }} --port=${{ vars.GCP_PORT }}
